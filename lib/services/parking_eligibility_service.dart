@@ -1,4 +1,5 @@
 import '../models/parking_option.dart';
+import '../models/permit_profile.dart';
 
 /// Applies time- and permit-dependent parking rules to a parking option.
 ///
@@ -8,34 +9,89 @@ import '../models/parking_option.dart';
 class ParkingEligibilityService {
   const ParkingEligibilityService();
 
-  /// Returns whether [permit] may use [option] at [arrivalTime].
+  /// Returns whether [permit] may use [option] for the planned stay.
   ///
-  /// Current simplified policy:
-  /// 1. General zone flexibility is assumed on weekends.
-  /// 2. General zone flexibility is assumed from 3 p.m. on weekdays.
-  /// 3. During weekday restricted hours, the permit zone must be listed in
-  ///    [ParkingOption.normalPermitZones].
-  ///
-  /// These rules are prototype assumptions and must be checked against current
-  /// UCI Transportation policy before production use.
+  /// This MVP intentionally ignores university holidays. Posted signs,
+  /// 24-hour reserved spaces, closures, and enforcement instructions always
+  /// override an app recommendation.
   bool canPark({
     required ParkingOption option,
     required PermitProfile permit,
     required DateTime arrivalTime,
+    DateTime? departureTime,
   }) {
     // Dart numbers weekdays from Monday (1) through Sunday (7).
     final isWeekend =
         arrivalTime.weekday == DateTime.saturday ||
         arrivalTime.weekday == DateTime.sunday;
 
-    // DateTime.hour uses a 24-hour clock, so 15 means 3:00 p.m.
-    final zoneRestrictionsHaveEnded = arrivalTime.hour >= 15;
+    return switch (permit.type) {
+      PermitType.s || PermitType.p => _studentCanPark(
+        option: option,
+        permit: permit,
+        arrivalTime: arrivalTime,
+        departureTime: departureTime,
+        isWeekend: isWeekend,
+      ),
+      PermitType.r => _residentCanPark(
+        option: option,
+        permit: permit,
+        arrivalTime: arrivalTime,
+        isWeekend: isWeekend,
+      ),
+      // Evening permits gain access at 5 p.m. on weekdays and all weekend.
+      PermitType.e => isWeekend || arrivalTime.hour >= 17,
+      // Motorcycle permits require motorcycle-stall data, which the current
+      // six general-parking markers do not yet represent.
+      PermitType.mx => false,
+      // ACC housing permits do not automatically authorize campus parking.
+      PermitType.acc => false,
+      // Only show options where an on-site visitor purchase was verified.
+      PermitType.none => option.visitorPurchaseAvailable,
+    };
+  }
 
-    // The first prototype models general/unassigned areas only. Current UCI
-    // rules allow zone flexibility after 3 p.m. on weekdays and on weekends.
-    if (isWeekend || zoneRestrictionsHaveEnded) return true;
+  bool _studentCanPark({
+    required ParkingOption option,
+    required PermitProfile permit,
+    required DateTime arrivalTime,
+    required DateTime? departureTime,
+    required bool isWeekend,
+  }) {
+    // Per the MVP product decision, S and P are never treated as overnight
+    // permits—even if the arrival itself occurs during an allowed period.
+    if (departureTime != null && !_sameDate(arrivalTime, departureTime)) {
+      return false;
+    }
 
-    // Set.contains is an efficient membership check for the assigned zone.
+    // UCI grants cross-zone general parking after 3 p.m. and on weekends.
+    if (isWeekend || arrivalTime.hour >= 15) return true;
+
+    // From 7 a.m. to 3 p.m. on weekdays, the assigned zone controls access.
+    // Times before 7 a.m. are rejected to avoid implying overnight validity.
+    if (arrivalTime.hour < 7) return false;
     return option.normalPermitZones.contains(permit.zone);
   }
+
+  bool _residentCanPark({
+    required ParkingOption option,
+    required PermitProfile permit,
+    required DateTime arrivalTime,
+    required bool isWeekend,
+  }) {
+    final residentPermit = permit.residentPermit;
+    if (residentPermit == null) return false;
+
+    // R-CVGRAD is specifically excluded from the broad surface-lot exception.
+    final hasSurfaceLotPrivilege =
+        residentPermit != ResidentPermitType.rCvGrad &&
+        (isWeekend || arrivalTime.hour >= 17) &&
+        option.isSurfaceLot;
+
+    return option.residentPermits.contains(residentPermit) ||
+        hasSurfaceLotPrivilege;
+  }
+
+  bool _sameDate(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
 }

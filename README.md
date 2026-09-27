@@ -20,12 +20,22 @@ map/UI operation in context.
 ## What works now
 
 - ArcGIS map centered on UCI with six parking options
-- S Zone 4 eligibility filtering for a sample weekday arrival
+- First-launch permit onboarding with editable S, P, R, E, MX, ACC, and
+  no-permit profiles
+- Local-only profile storage with no login or backend
+- Time-aware S/P zone, resident, evening, and paid-visitor eligibility
 - Expected and conservative total-time estimates
 - Parking-search and failed-lot penalties
 - Hill-adjusted walking time
 - Mobile recommendation sheet and map selection
 - Unit tests for permit and arrival-time logic
+
+The permit rules and displayed rates were checked in September 2026 against
+UCI Transportation's official [student permit rules](https://parking.uci.edu/permits/student/),
+[visitor permit options](https://parking.uci.edu/permits/visitor/), and
+[published rate table](https://parking.uci.edu/permits/rates/). The rate table
+currently labels its values as 2025–2026. Posted signs and current UCI guidance
+always override the prototype.
 
 Parking times, live reports, and coordinates are explicitly seed/demo data.
 They must not be presented as live UCI availability.
@@ -71,8 +81,9 @@ flutter test
 
 ## Next slices
 
-1. Replace the fixed permit with a profile/setup screen.
-2. Represent parking facilities as area/stall-category polygons.
+1. Add editable arrival time, destination, and planned departure.
+2. Represent parking facilities as area/stall-category polygons, including
+   preferred, reserved, motorcycle, pay-by-space, and 24-hour restrictions.
 3. Add voluntary `started searching`, `parked`, `gave up`, and `leaving`
    observations.
 4. Replace demo search estimates with time-bucketed observations and confidence.

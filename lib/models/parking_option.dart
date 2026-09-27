@@ -1,26 +1,4 @@
-/// Student parking permit categories represented by the prototype.
-///
-/// Only S and P are modeled so far. More UCI permit categories can be added
-/// after the authoritative rule set is gathered.
-enum PermitType { s, p }
-
-/// The permit information that affects a student's parking eligibility.
-///
-/// A profile is immutable: both fields are `final`, so a new profile is
-/// created if the user changes their permit in a future settings screen.
-class PermitProfile {
-  /// Creates a permit with a category and assigned parking zone.
-  const PermitProfile({required this.type, required this.zone});
-
-  /// The permit category, such as an S student permit.
-  final PermitType type;
-
-  /// The numbered UCI parking zone assigned to the permit.
-  final int zone;
-
-  /// A human-readable label used in the trip header.
-  String get label => '${type.name.toUpperCase()} Zone $zone';
-}
+import 'permit_profile.dart';
 
 /// All inputs required to evaluate and display one parking facility.
 ///
@@ -36,6 +14,10 @@ class ParkingOption {
     required this.latitude,
     required this.longitude,
     required this.normalPermitZones,
+    required this.residentPermits,
+    required this.isSurfaceLot,
+    required this.visitorPurchaseAvailable,
+    this.paidParkingSummary,
     required this.driveMinutes,
     required this.walkMinutes,
     required this.elevationGainMeters,
@@ -63,6 +45,19 @@ class ParkingOption {
 
   /// Zones that may normally use this option during restricted hours.
   final Set<int> normalPermitZones;
+
+  /// Resident permit variants with normal access to this facility.
+  final Set<ResidentPermitType> residentPermits;
+
+  /// Whether this option is a surface lot rather than a parking structure.
+  /// This distinction matters for resident after-hours privileges.
+  final bool isSurfaceLot;
+
+  /// Whether a driver can buy visitor parking at this exact option.
+  final bool visitorPurchaseAvailable;
+
+  /// Human-readable purchase method and price, when verified.
+  final String? paidParkingSummary;
 
   /// Demonstration driving time from the assumed starting point.
   final int driveMinutes;

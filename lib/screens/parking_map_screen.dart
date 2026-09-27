@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../data/sample_parking_data.dart';
 import '../models/parking_option.dart';
+import '../models/permit_profile.dart';
 import '../services/arrival_estimator.dart';
 import '../services/parking_eligibility_service.dart';
 
@@ -12,21 +13,36 @@ import '../services/parking_eligibility_service.dart';
 /// user sees. The current trip inputs are fixed prototype values; future input
 /// screens will supply them dynamically.
 class ParkingMapScreen extends StatefulWidget {
-  /// Creates the screen and receives API-key status from the app root.
-  const ParkingMapScreen({required this.hasArcGISKey, super.key});
+  /// Creates the screen using the locally saved permit selection.
+  const ParkingMapScreen({
+    required this.hasArcGISKey,
+    required this.permit,
+    required this.onEditProfile,
+    super.key,
+  });
 
   /// Whether the build command supplied an ArcGIS API key.
   final bool hasArcGISKey;
+
+  /// Current permit selection used for every eligibility decision.
+  final PermitProfile permit;
+
+  /// Opens the same form used during first-launch onboarding.
+  final VoidCallback onEditProfile;
 
   @override
   State<ParkingMapScreen> createState() => _ParkingMapScreenState();
 }
 
 class _ParkingMapScreenState extends State<ParkingMapScreen> {
-  // These are fixed scenario inputs for the first vertical slice. Keeping them
-  // near the top of the state class makes the prototype assumptions visible.
-  static const _permit = PermitProfile(type: PermitType.s, zone: 4);
-  static final _arrivalTime = DateTime(2026, 10, 13, 10);
+  // Trip editing is the next vertical slice. For now, the prototype evaluates
+  // parking 30 minutes from launch and assumes a two-hour campus stay.
+  late final DateTime _arrivalTime = DateTime.now().add(
+    const Duration(minutes: 30),
+  );
+  late final DateTime _departureTime = _arrivalTime.add(
+    const Duration(hours: 2),
+  );
   static const _destination = 'Donald Bren Hall';
 
   // The controller is Flutter's programmatic handle to the native ArcGIS map.
@@ -71,9 +87,17 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
   /// Convenience wrapper for applying the current scenario's permit and time.
   bool _isLegal(ParkingOption option) => _eligibility.canPark(
     option: option,
-    permit: _permit,
+    permit: widget.permit,
     arrivalTime: _arrivalTime,
+    departureTime: _departureTime,
   );
+
+  String get _formattedArrivalTime {
+    final hour = _arrivalTime.hour % 12 == 0 ? 12 : _arrivalTime.hour % 12;
+    final minute = _arrivalTime.minute.toString().padLeft(2, '0');
+    final period = _arrivalTime.hour < 12 ? 'AM' : 'PM';
+    return '$hour:$minute $period';
+  }
 
   @override
   void dispose() {
@@ -195,8 +219,10 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _TripHeader(
-                    permitLabel: _permit.label,
+                    permitLabel: widget.permit.label,
                     destination: _destination,
+                    arrivalTimeLabel: _formattedArrivalTime,
+                    onEditProfile: widget.onEditProfile,
                   ),
                   if (!widget.hasArcGISKey) ...[
                     const SizedBox(height: 8),
@@ -258,6 +284,8 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
                         option: option,
                         estimate: _estimator.estimate(option),
                         legal: _isLegal(option),
+                        noPermit: widget.permit.type == PermitType.none,
+                        arrivalTimeLabel: _formattedArrivalTime,
                         selected: option.id == _selectedId,
                         onTap: () => _selectOption(option),
                       ),
@@ -276,10 +304,17 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
 
 /// Compact summary of the active permit, destination, and arrival time.
 class _TripHeader extends StatelessWidget {
-  const _TripHeader({required this.permitLabel, required this.destination});
+  const _TripHeader({
+    required this.permitLabel,
+    required this.destination,
+    required this.arrivalTimeLabel,
+    required this.onEditProfile,
+  });
 
   final String permitLabel;
   final String destination;
+  final String arrivalTimeLabel;
+  final VoidCallback onEditProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -311,7 +346,7 @@ class _TripHeader extends StatelessWidget {
                         ?.copyWith(fontWeight: FontWeight.w900),
                   ),
                   Text(
-                    '$permitLabel  ·  $destination  ·  10:00 AM',
+                    '$permitLabel  ·  $destination  ·  $arrivalTimeLabel',
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
@@ -319,8 +354,8 @@ class _TripHeader extends StatelessWidget {
               ),
             ),
             IconButton(
-              tooltip: 'Edit trip',
-              onPressed: () {},
+              tooltip: 'Edit parking profile',
+              onPressed: onEditProfile,
               icon: const Icon(Icons.tune),
             ),
           ],
@@ -364,6 +399,8 @@ class _ParkingOptionCard extends StatelessWidget {
     required this.option,
     required this.estimate,
     required this.legal,
+    required this.noPermit,
+    required this.arrivalTimeLabel,
     required this.selected,
     required this.onTap,
   });
@@ -371,6 +408,8 @@ class _ParkingOptionCard extends StatelessWidget {
   final ParkingOption option;
   final ArrivalEstimate estimate;
   final bool legal;
+  final bool noPermit;
+  final String arrivalTimeLabel;
   final bool selected;
   final VoidCallback onTap;
 
@@ -407,11 +446,21 @@ class _ParkingOptionCard extends StatelessWidget {
                             ?.copyWith(fontWeight: FontWeight.w900),
                       ),
                     ),
-                    _StatusChip(legal: legal),
+                    _StatusChip(legal: legal, noPermit: noPermit),
                   ],
                 ),
                 const SizedBox(height: 2),
                 Text(option.name, style: Theme.of(context).textTheme.bodySmall),
+                if (legal && option.paidParkingSummary != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    option.paidParkingSummary!,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF11643F),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 Row(
                   children: [
@@ -447,7 +496,7 @@ class _ParkingOptionCard extends StatelessWidget {
                               ),
                         ),
                         Text(
-                          legal ? 'total expected' : 'at 10:00 AM',
+                          legal ? 'total expected' : 'at $arrivalTimeLabel',
                           style: Theme.of(context).textTheme.labelSmall,
                         ),
                       ],
@@ -514,9 +563,10 @@ class _Metric extends StatelessWidget {
 
 /// Human-readable eligibility badge displayed in each parking card.
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.legal});
+  const _StatusChip({required this.legal, required this.noPermit});
 
   final bool legal;
+  final bool noPermit;
 
   @override
   Widget build(BuildContext context) {
@@ -527,7 +577,9 @@ class _StatusChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(99),
       ),
       child: Text(
-        legal ? 'Legal for permit' : 'Outside your zone',
+        legal
+            ? (noPermit ? 'Paid visitor option' : 'Legal for permit')
+            : (noPermit ? 'No verified purchase' : 'Not eligible'),
         style: TextStyle(
           color: legal ? const Color(0xFF11643F) : const Color(0xFF626973),
           fontSize: 11,

@@ -48,16 +48,22 @@ The main hand-written files are:
 lib/
   main.dart                         process entry point
   app.dart                          app-wide theme and first screen
-  models/parking_option.dart        domain vocabulary
+  models/permit_profile.dart        permit types and local profile
+  models/parking_option.dart        parking-facility vocabulary
   data/sample_parking_data.dart     prototype inputs
+  services/permit_profile_store.dart
+                                    on-device profile persistence
   services/arrival_estimator.dart   travel-time calculations
   services/parking_eligibility_service.dart
                                     permit rules
-  screens/parking_map_screen.dart   ArcGIS map and Flutter interface
+  screens/permit_onboarding_screen.dart
+                                    first-launch and edit form
+  screens/parking_map_screen.dart   ArcGIS map and recommendations
 
 test/
   arrival_estimator_test.dart
   parking_eligibility_service_test.dart
+  permit_profile_test.dart
 ```
 
 The `android/` and `ios/` directories mostly contain platform scaffolding
@@ -74,7 +80,9 @@ main()
   -> read ARCGIS_API_KEY from the compiled environment
   -> assign the key to ArcGISEnvironment
   -> runApp(ZotEtaApp)
-  -> MaterialApp builds ParkingMapScreen
+  -> MaterialApp builds _AppHome
+  -> _AppHome loads the local permit profile
+  -> show onboarding if absent, otherwise show ParkingMapScreen
 ```
 
 `config.json` is not read directly by code at runtime. The command
@@ -124,7 +132,25 @@ The model deliberately contains ordinary values such as numbers and strings,
 not widgets or ArcGIS graphics. That separation lets tests calculate results
 without starting Android or loading a map.
 
-## 7. Seed data boundary
+`PermitProfile` uses nullable fields because different permit families require
+different details: S/P need a zone, R needs a resident subtype, ACC needs a
+community, and E/MX/no-permit need no second selection. Its `isComplete`
+property validates those combinations before they can be saved.
+
+## 7. Local profile storage
+
+`PermitProfileStore` turns the profile into JSON and saves that short string
+with Flutter's `shared_preferences` package. On Android this becomes ordinary
+app preference data on the device. It is not a remote database and does not
+sync across phones.
+
+This is intentionally a setting—not an identity system. The app stores no
+UCInetID, password, license plate, home address, payment information, or trip
+history. `app.dart` waits for the asynchronous load before deciding whether to
+show onboarding or the map. Saving updates both device storage and Flutter
+state, which immediately switches screens.
+
+## 8. Seed data boundary
 
 `sample_parking_data.dart` creates six `ParkingOption` objects. This is a local,
 in-memory list: it does not query UCI, ArcGIS, or a database.
@@ -134,23 +160,31 @@ availability, and community-report values are demonstrations. Centralizing
 them makes it straightforward to replace their source later while preserving
 the objects consumed by the rest of the app.
 
-## 8. Eligibility service
+## 9. Eligibility service
 
-`ParkingEligibilityService.canPark` accepts three explicit inputs:
+`ParkingEligibilityService.canPark` accepts four explicit inputs:
 
 1. A parking option
 2. A permit profile
 3. An intended arrival time
+4. An optional departure time
 
-The prototype assumes cross-zone flexibility on weekends and after 3 p.m. On a
-weekday before 3 p.m., it checks whether the option's zone set contains the
-permit zone. This is a simplified rule model, not an authoritative statement of
-all UCI, ARC, ACC, stall, event, or overnight restrictions.
+The service branches by permit family. S/P enforce assigned zones before 3
+p.m., allow general cross-zone parking after 3 p.m. and on weekends, and reject
+a planned stay that crosses midnight. Resident profiles use their assigned
+facility plus the verified after-hours surface-lot exception. E begins at 5
+p.m. on weekdays and works on weekends. ACC-only profiles do not imply campus
+access. No-permit profiles see only facilities with a verified on-site visitor
+purchase option. MX stays ineligible until motorcycle stalls are represented.
+
+The present markers represent general parking areas, not individual general,
+preferred, reserved, pay-by-space, or 24-hour stalls. Holiday rules are also
+deliberately deferred. Posted signs always override this prototype.
 
 Keeping the function deterministic is valuable: the same inputs always produce
 the same result, making it easy to test and reason about.
 
-## 9. Arrival estimator
+## 10. Arrival estimator
 
 `ArrivalEstimator.estimate` converts a `ParkingOption` into an
 `ArrivalEstimate`.
@@ -189,7 +223,7 @@ The cautious total uses the 80th-percentile search time. High-risk options
 reserve the full fallback penalty; lower-risk options reserve half. This is a
 prototype policy intended to communicate uncertainty, not a trained forecast.
 
-## 10. ArcGIS map lifecycle
+## 11. ArcGIS map lifecycle
 
 `ArcGISMapView` creates a native map view and gives the app a controller. Once
 the view reports that it is ready, `_onMapReady`:
@@ -209,7 +243,7 @@ pixel for a marker. A lookup map connects the returned ArcGIS `Graphic` to the
 app's parking ID. Selecting a card performs the reverse interaction: it updates
 the ID and moves the ArcGIS viewpoint toward the corresponding coordinates.
 
-## 11. Ranking and rendering
+## 12. Ranking and rendering
 
 The `_rankedOptions` getter copies the seed list before sorting it. The copy is
 important because Dart's `sort` modifies a list in place, while seed data should
@@ -224,14 +258,15 @@ The resulting list is transformed into widgets by Flutter's collection `for`
 syntax. Each `ParkingOptionCard` receives data and callbacks; it does not own
 the ranking logic itself.
 
-## 12. Testing strategy
+## 13. Testing strategy
 
 Unit tests call the services directly and assert known outcomes. They do not
 need a map, API key, network, or emulator.
 
 The estimator tests protect both exact arithmetic and the higher-level behavior
 that a lower-risk option receives a smaller search buffer. The eligibility tests
-protect weekday zone enforcement and after-hours flexibility.
+protect weekday zone enforcement, after-hours flexibility, overnight rejection,
+resident access, visitor purchase filtering, and profile serialization.
 
 Run the quality checks with:
 
@@ -243,20 +278,21 @@ flutter test
 `flutter analyze` finds type, style, and common correctness problems without
 running the app. `flutter test` executes the behavioral assertions.
 
-## 13. What is real and what is not yet connected
+## 14. What is real and what is not yet connected
 
 Real today:
 
 - Android application and Flutter UI
 - ArcGIS basemap, viewpoints, overlay markers, and marker identification
 - Permit-rule and arrival-estimation services
+- Editable, locally persisted parking profile
 - Recommendation sorting and interaction
 - Compile-time API-key configuration
 - Unit tests
 
 Still mocked:
 
-- User permit and intended arrival time
+- Intended arrival/departure time (currently launch + 30 minutes / two hours)
 - Starting point and destination input
 - ArcGIS driving and walking routes
 - ArcGIS elevation queries
@@ -268,7 +304,7 @@ This boundary should be stated clearly in demos. The current version validates
 the product concept, software structure, and geographic user experience; it
 does not claim to know live parking availability.
 
-## 14. How future data should flow
+## 15. How future data should flow
 
 The desired production flow is:
 
