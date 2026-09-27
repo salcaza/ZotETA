@@ -2,10 +2,13 @@ import 'package:arcgis_maps/arcgis_maps.dart';
 import 'package:flutter/material.dart';
 
 import '../data/sample_parking_data.dart';
+import '../models/campus_destination.dart';
 import '../models/parking_option.dart';
 import '../models/permit_profile.dart';
 import '../services/arrival_estimator.dart';
+import '../services/destination_walk_estimator.dart';
 import '../services/parking_eligibility_service.dart';
+import 'destination_search_screen.dart';
 
 /// The main ZotETA experience: an ArcGIS map plus ranked parking choices.
 ///
@@ -17,6 +20,8 @@ class ParkingMapScreen extends StatefulWidget {
   const ParkingMapScreen({
     required this.hasArcGISKey,
     required this.permit,
+    required this.destination,
+    required this.onDestinationChanged,
     required this.onEditProfile,
     super.key,
   });
@@ -26,6 +31,13 @@ class ParkingMapScreen extends StatefulWidget {
 
   /// Current permit selection used for every eligibility decision.
   final PermitProfile permit;
+
+  /// Exact official classroom selected by the user.
+  final CampusDestination destination;
+
+  /// Saves a newly selected classroom in the app coordinator.
+  final Future<void> Function(CampusDestination destination)
+  onDestinationChanged;
 
   /// Opens the same form used during first-launch onboarding.
   final VoidCallback onEditProfile;
@@ -43,7 +55,6 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
   late final DateTime _departureTime = _arrivalTime.add(
     const Duration(hours: 2),
   );
-  static const _destination = 'Donald Bren Hall';
 
   // The controller is Flutter's programmatic handle to the native ArcGIS map.
   // It is used to assign a map, add overlays, identify taps, and move the view.
@@ -56,6 +67,7 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
   // Business rules live in services rather than directly inside UI widgets.
   final _eligibility = const ParkingEligibilityService();
   final _estimator = const ArrivalEstimator();
+  final _walkEstimator = const DestinationWalkEstimator();
 
   // ArcGIS returns a Graphic after a marker tap. This lookup connects that
   // SDK object back to the ParkingOption ID understood by our app.
@@ -77,9 +89,13 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
       final bLegal = _isLegal(b);
       if (aLegal != bLegal) return aLegal ? -1 : 1;
       return _estimator
-          .estimate(a)
+          .estimate(a, walkMinutesOverride: _walkMinutes(a))
           .expectedMinutes
-          .compareTo(_estimator.estimate(b).expectedMinutes);
+          .compareTo(
+            _estimator
+                .estimate(b, walkMinutesOverride: _walkMinutes(b))
+                .expectedMinutes,
+          );
     });
     return options;
   }
@@ -91,6 +107,12 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
     arrivalTime: _arrivalTime,
     departureTime: _departureTime,
   );
+
+  int _walkMinutes(ParkingOption option) =>
+      _walkEstimator.estimateMinutes(option, widget.destination);
+
+  ArrivalEstimate _estimate(ParkingOption option) =>
+      _estimator.estimate(option, walkMinutesOverride: _walkMinutes(option));
 
   String get _formattedArrivalTime {
     final hour = _arrivalTime.hour % 12 == 0 ? 12 : _arrivalTime.hour % 12;
@@ -144,6 +166,27 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
       _parkingIdByGraphic[graphic] = option.id;
     }
 
+    // UCI publishes the exact room identifier but only building-level GIS
+    // geometry. This gold marker therefore represents the official building
+    // endpoint; indoor minutes remain explicit in the ETA and UI.
+    final destinationSymbol =
+        SimpleMarkerSymbol(color: const Color(0xFFFFC72C), size: 20)
+          ..outline = SimpleLineSymbol(
+            style: SimpleLineSymbolStyle.solid,
+            color: const Color(0xFF255799),
+            width: 3,
+          );
+    _graphicsOverlay.graphics.add(
+      Graphic(
+        geometry: ArcGISPoint(
+          x: widget.destination.longitude,
+          y: widget.destination.latitude,
+          spatialReference: SpatialReference.wgs84,
+        ),
+        symbol: destinationSymbol,
+      ),
+    );
+
     // A viewpoint is the map camera. Scale 18,000 shows the UCI campus area.
     _mapController.setViewpoint(
       Viewpoint.fromCenter(
@@ -196,6 +239,19 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
     );
   }
 
+  Future<void> _chooseDestination() async {
+    final selected = await Navigator.push<CampusDestination>(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            DestinationSearchScreen(currentDestination: widget.destination),
+      ),
+    );
+    if (selected != null && selected.roomCode != widget.destination.roomCode) {
+      await widget.onDestinationChanged(selected);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Stack layers the map, header, and draggable results sheet on top of one
@@ -220,8 +276,9 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
                 children: [
                   _TripHeader(
                     permitLabel: widget.permit.label,
-                    destination: _destination,
+                    destination: widget.destination,
                     arrivalTimeLabel: _formattedArrivalTime,
+                    onChooseDestination: _chooseDestination,
                     onEditProfile: widget.onEditProfile,
                   ),
                   if (!widget.hasArcGISKey) ...[
@@ -272,7 +329,7 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Drive + expected search + hill-adjusted walk',
+                      'Drive + search + destination-aware walk + indoor buffer',
                       style: Theme.of(context).textTheme.bodyMedium
                           ?.copyWith(color: const Color(0xFF59636F)),
                     ),
@@ -282,7 +339,7 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
                     for (final option in _rankedOptions) ...[
                       _ParkingOptionCard(
                         option: option,
-                        estimate: _estimator.estimate(option),
+                        estimate: _estimate(option),
                         legal: _isLegal(option),
                         noPermit: widget.permit.type == PermitType.none,
                         arrivalTimeLabel: _formattedArrivalTime,
@@ -308,12 +365,14 @@ class _TripHeader extends StatelessWidget {
     required this.permitLabel,
     required this.destination,
     required this.arrivalTimeLabel,
+    required this.onChooseDestination,
     required this.onEditProfile,
   });
 
   final String permitLabel;
-  final String destination;
+  final CampusDestination destination;
   final String arrivalTimeLabel;
+  final VoidCallback onChooseDestination;
   final VoidCallback onEditProfile;
 
   @override
@@ -346,9 +405,31 @@ class _TripHeader extends StatelessWidget {
                         ?.copyWith(fontWeight: FontWeight.w900),
                   ),
                   Text(
-                    '$permitLabel  ·  $destination  ·  $arrivalTimeLabel',
-                    overflow: TextOverflow.ellipsis,
+                    '$permitLabel  ·  $arrivalTimeLabel',
                     style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 2),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: onChooseDestination,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.search, size: 15),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              '${destination.roomCode} · '
+                              '${destination.building.name}',
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
               ),

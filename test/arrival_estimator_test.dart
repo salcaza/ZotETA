@@ -31,4 +31,12 @@ void main() {
       lessThan(estimator.estimate(aps).expectedParkingMinutes),
     );
   });
+
+  test('accepts a destination-specific walking estimate', () {
+    final aps = sampleParkingOptions.firstWhere((option) => option.id == 'aps');
+    final estimate = estimator.estimate(aps, walkMinutesOverride: 12);
+
+    expect(estimate.adjustedWalkMinutes, 12);
+    expect(estimate.expectedMinutes, 45);
+  });
 }

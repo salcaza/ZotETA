@@ -41,11 +41,12 @@ class ArrivalEstimator {
   ///
   /// Conservative total:
   /// `drive + P80 search + fallback allowance + adjusted walk`
-  ArrivalEstimate estimate(ParkingOption option) {
+  ArrivalEstimate estimate(ParkingOption option, {int? walkMinutesOverride}) {
     // Transparent prototype heuristic: every 12 m of ascent adds roughly a
     // minute to the base walk. The production version will use route samples.
-    final hillMinutes = (option.elevationGainMeters / 12).ceil();
-    final adjustedWalk = option.walkMinutes + hillMinutes;
+    final adjustedWalk =
+        walkMinutesOverride ??
+        option.walkMinutes + (option.elevationGainMeters / 12).ceil();
 
     // Expected-value reasoning weights the fallback cost by its probability.
     // For a 25% full probability and a 14-minute fallback, this adds 4 minutes

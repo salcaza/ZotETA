@@ -49,8 +49,13 @@ lib/
   main.dart                         process entry point
   app.dart                          app-wide theme and first screen
   models/permit_profile.dart        permit types and local profile
+  models/campus_destination.dart    building and exact-room destination
   models/parking_option.dart        parking-facility vocabulary
   data/sample_parking_data.dart     prototype inputs
+  data/uci_classroom_catalog.dart   139 official room identifiers
+  services/destination_store.dart   selected-room persistence
+  services/destination_walk_estimator.dart
+                                    destination-aware walk estimate
   services/permit_profile_store.dart
                                     on-device profile persistence
   services/arrival_estimator.dart   travel-time calculations
@@ -58,12 +63,15 @@ lib/
                                     permit rules
   screens/permit_onboarding_screen.dart
                                     first-launch and edit form
+  screens/destination_search_screen.dart
+                                    exact-room search
   screens/parking_map_screen.dart   ArcGIS map and recommendations
 
 test/
   arrival_estimator_test.dart
   parking_eligibility_service_test.dart
   permit_profile_test.dart
+  campus_destination_test.dart
 ```
 
 The `android/` and `ios/` directories mostly contain platform scaffolding
@@ -82,7 +90,8 @@ main()
   -> runApp(ZotEtaApp)
   -> MaterialApp builds _AppHome
   -> _AppHome loads the local permit profile
-  -> show onboarding if absent, otherwise show ParkingMapScreen
+  -> load the saved classroom or default to DBH 1100
+  -> show onboarding if the permit is absent, otherwise show ParkingMapScreen
 ```
 
 `config.json` is not read directly by code at runtime. The command
@@ -160,6 +169,14 @@ availability, and community-report values are demonstrations. Centralizing
 them makes it straightforward to replace their source later while preserving
 the objects consumed by the rest of the app.
 
+The classroom catalog has a different trust boundary. Its 139 room identifiers
+come from UCI Classroom Technologies, while each of its 29 building marker
+coordinates and public map IDs comes from UCI's interactive campus map. These
+are official public records checked in September 2026, not demo coordinates.
+However, UCI does not expose room-level GIS geometry publicly. A destination
+therefore keeps the exact room identity while using the official building
+marker as its outdoor endpoint.
+
 ## 9. Eligibility service
 
 `ParkingEligibilityService.canPark` accepts four explicit inputs:
@@ -222,6 +239,23 @@ drive + expected parking + adjusted walk
 The cautious total uses the 80th-percentile search time. High-risk options
 reserve the full fallback penalty; lower-risk options reserve half. This is a
 prototype policy intended to communicate uncertainty, not a trained forecast.
+
+### Destination-aware walking
+
+`DestinationWalkEstimator` replaces the old fixed DBH walk when a parking
+recommendation is rendered. Until pedestrian routing is connected, it uses:
+
+```text
+outdoor minutes = ceil(
+  geodesic parking-to-building distance × 1.25 path factor ÷ 75 meters/minute
+)
+classroom walk = outdoor minutes + indoor allowance
+```
+
+The floor is inferred from UCI's room-number convention and clearly labeled as
+inferred. The indoor allowance is two minutes on the first level plus one
+minute for each additional level. This is transparent and destination-sensitive
+but not presented as indoor turn-by-turn navigation.
 
 ## 11. ArcGIS map lifecycle
 
@@ -286,6 +320,8 @@ Real today:
 - ArcGIS basemap, viewpoints, overlay markers, and marker identification
 - Permit-rule and arrival-estimation services
 - Editable, locally persisted parking profile
+- Exact-room search with a locally persisted classroom selection
+- Official building destination marker and room-aware walking estimate
 - Recommendation sorting and interaction
 - Compile-time API-key configuration
 - Unit tests
@@ -293,9 +329,10 @@ Real today:
 Still mocked:
 
 - Intended arrival/departure time (currently launch + 30 minutes / two hours)
-- Starting point and destination input
+- Starting point input
 - ArcGIS driving and walking routes
 - ArcGIS elevation queries
+- Room-level indoor geometry and turn-by-turn indoor routing
 - Authoritative UCI parking polygons and rule records
 - Live availability observations and a backend
 - Confidence, abuse prevention, and privacy controls

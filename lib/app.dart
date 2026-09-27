@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'data/uci_classroom_catalog.dart';
+import 'models/campus_destination.dart';
 import 'models/permit_profile.dart';
 import 'screens/permit_onboarding_screen.dart';
 import 'screens/parking_map_screen.dart';
+import 'services/destination_store.dart';
 import 'services/permit_profile_store.dart';
 
 /// The root widget for the ZotETA application.
@@ -54,21 +57,25 @@ class _AppHome extends StatefulWidget {
 
 class _AppHomeState extends State<_AppHome> {
   final _profileStore = PermitProfileStore();
+  final _destinationStore = DestinationStore();
   PermitProfile? _profile;
+  CampusDestination _destination = defaultCampusDestination;
   bool _loaded = false;
   bool _editing = false;
 
   @override
   void initState() {
     super.initState();
-    _loadProfile();
+    _loadLocalSettings();
   }
 
-  Future<void> _loadProfile() async {
+  Future<void> _loadLocalSettings() async {
     final profile = await _profileStore.load();
+    final destination = await _destinationStore.load();
     if (!mounted) return;
     setState(() {
       _profile = profile;
+      _destination = destination;
       _loaded = true;
     });
   }
@@ -80,6 +87,12 @@ class _AppHomeState extends State<_AppHome> {
       _profile = profile;
       _editing = false;
     });
+  }
+
+  Future<void> _saveDestination(CampusDestination destination) async {
+    await _destinationStore.save(destination);
+    if (!mounted) return;
+    setState(() => _destination = destination);
   }
 
   @override
@@ -97,9 +110,11 @@ class _AppHomeState extends State<_AppHome> {
     }
 
     return ParkingMapScreen(
-      key: ValueKey(profile.cacheKey),
+      key: ValueKey('${profile.cacheKey}:${_destination.roomCode}'),
       hasArcGISKey: widget.hasArcGISKey,
       permit: profile,
+      destination: _destination,
+      onDestinationChanged: _saveDestination,
       onEditProfile: () => setState(() => _editing = true),
     );
   }
