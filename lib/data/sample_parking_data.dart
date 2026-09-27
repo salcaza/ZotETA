@@ -29,7 +29,6 @@ const sampleParkingOptions = <ParkingOption>[
     searchP80Minutes: 17,
     fullProbability: 0.25,
     fallbackPenaltyMinutes: 14,
-    liveReportSummary: '2 failed searches in the last 20 min',
   ),
   ParkingOption(
     id: 'arc',
@@ -49,7 +48,6 @@ const sampleParkingOptions = <ParkingOption>[
     searchP80Minutes: 7,
     fullProbability: 0.05,
     fallbackPenaltyMinutes: 8,
-    liveReportSummary: '4 successful parks in the last 25 min',
   ),
   ParkingOption(
     id: 'ecps-white',
@@ -68,7 +66,6 @@ const sampleParkingOptions = <ParkingOption>[
     searchP80Minutes: 9,
     fullProbability: 0.08,
     fallbackPenaltyMinutes: 8,
-    liveReportSummary: 'White-stall reports are 18 min old',
   ),
   ParkingOption(
     id: 'mps',
@@ -87,7 +84,6 @@ const sampleParkingOptions = <ParkingOption>[
     searchP80Minutes: 12,
     fullProbability: 0.14,
     fallbackPenaltyMinutes: 12,
-    liveReportSummary: 'No recent reports',
   ),
   ParkingOption(
     id: 'ssps',
@@ -106,7 +102,6 @@ const sampleParkingOptions = <ParkingOption>[
     searchP80Minutes: 16,
     fullProbability: 0.22,
     fallbackPenaltyMinutes: 13,
-    liveReportSummary: '1 successful park 12 min ago',
   ),
   ParkingOption(
     id: 'scps',
@@ -125,6 +120,5 @@ const sampleParkingOptions = <ParkingOption>[
     searchP80Minutes: 14,
     fullProbability: 0.18,
     fallbackPenaltyMinutes: 12,
-    liveReportSummary: '2 successful parks 30 min ago',
   ),
 ];

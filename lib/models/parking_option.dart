@@ -25,7 +25,6 @@ class ParkingOption {
     required this.searchP80Minutes,
     required this.fullProbability,
     required this.fallbackPenaltyMinutes,
-    required this.liveReportSummary,
   });
 
   /// Stable machine-readable identifier used to connect cards and map markers.
@@ -79,7 +78,4 @@ class ParkingOption {
 
   /// Extra time lost if the driver must abandon this option and use a fallback.
   final int fallbackPenaltyMinutes;
-
-  /// Prototype summary that will eventually come from community observations.
-  final String liveReportSummary;
 }

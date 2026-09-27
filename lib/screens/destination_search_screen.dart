@@ -3,11 +3,18 @@ import 'package:flutter/material.dart';
 import '../data/uci_classroom_catalog.dart';
 import '../models/campus_destination.dart';
 
-/// Searchable list of exact rooms from UCI Classroom Technologies.
+/// Searchable list of UCI buildings and exact general-assignment rooms.
 class DestinationSearchScreen extends StatefulWidget {
-  const DestinationSearchScreen({required this.currentDestination, super.key});
+  const DestinationSearchScreen({
+    required this.currentDestination,
+    this.selectionRequired = false,
+    this.onSelected,
+    super.key,
+  });
 
-  final CampusDestination currentDestination;
+  final CampusDestination? currentDestination;
+  final bool selectionRequired;
+  final Future<void> Function(CampusDestination destination)? onSelected;
 
   @override
   State<DestinationSearchScreen> createState() =>
@@ -30,23 +37,44 @@ class _DestinationSearchScreenState extends State<DestinationSearchScreen> {
   List<CampusDestination> get _results {
     final query = _normalize(_query);
     if (query.isEmpty) {
-      const suggestedRooms = ['DBH 1100', 'ALP 1300', 'ICS 174', 'SSL 248'];
-      return [for (final code in suggestedRooms) destinationByRoomCode(code)!];
+      const suggestedBuildings = ['DBH', 'ALP', 'ICS', 'SSL'];
+      return [
+        for (final abbreviation in suggestedBuildings)
+          uciBuildingDestinations.firstWhere(
+            (destination) => destination.building.abbreviation == abbreviation,
+          ),
+      ];
     }
 
-    return uciClassroomDestinations.where((destination) {
+    return uciCampusDestinations.where((destination) {
       final searchable = _normalize(
-        '${destination.roomCode} ${destination.building.name}',
+        '${destination.roomCode ?? ''} ${destination.building.abbreviation} '
+        '${destination.building.name}',
       );
       return searchable.contains(query);
-    }).toList();
+    }).toList()..sort((a, b) {
+      if (a.isClassroom != b.isClassroom) return a.isClassroom ? 1 : -1;
+      return a.label.compareTo(b.label);
+    });
+  }
+
+  Future<void> _select(CampusDestination destination) async {
+    final callback = widget.onSelected;
+    if (callback != null) {
+      await callback(destination);
+      return;
+    }
+    if (mounted) Navigator.pop(context, destination);
   }
 
   @override
   Widget build(BuildContext context) {
     final results = _results;
     return Scaffold(
-      appBar: AppBar(title: const Text('Choose a classroom')),
+      appBar: AppBar(
+        automaticallyImplyLeading: !widget.selectionRequired,
+        title: const Text('Where are you going?'),
+      ),
       body: SafeArea(
         child: Column(
           children: [
@@ -56,7 +84,7 @@ class _DestinationSearchScreenState extends State<DestinationSearchScreen> {
                 controller: _searchController,
                 autoFocus: true,
                 leading: const Icon(Icons.search),
-                hintText: 'Try “DBH 1100” or “Donald Bren”',
+                hintText: 'Try “DBH”, “DBH 1100”, or “Donald Bren”',
                 trailing: [
                   if (_query.isNotEmpty)
                     IconButton(
@@ -78,12 +106,12 @@ class _DestinationSearchScreenState extends State<DestinationSearchScreen> {
                   Expanded(
                     child: Text(
                       _query.isEmpty
-                          ? 'Suggested classrooms'
-                          : '${results.length} exact room results',
+                          ? 'Suggested buildings'
+                          : '${results.length} building and room results',
                       style: Theme.of(context).textTheme.labelLarge,
                     ),
                   ),
-                  const Text('139 rooms · 29 buildings'),
+                  const Text('29 buildings · 139 rooms'),
                 ],
               ),
             ),
@@ -98,24 +126,26 @@ class _DestinationSearchScreenState extends State<DestinationSearchScreen> {
                       itemBuilder: (context, index) {
                         final destination = results[index];
                         final selected =
-                            destination.roomCode ==
-                            widget.currentDestination.roomCode;
+                            destination.storageKey ==
+                            widget.currentDestination?.storageKey;
                         return ListTile(
                           leading: CircleAvatar(
                             child: Text(destination.building.abbreviation),
                           ),
                           title: Text(
-                            destination.roomCode,
+                            destination.label,
                             style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                           subtitle: Text(
-                            '${destination.building.name} · inferred level '
-                            '${destination.inferredFloor}',
+                            destination.isClassroom
+                                ? '${destination.building.name} · inferred level '
+                                      '${destination.inferredFloor}'
+                                : '${destination.building.name} · whole building',
                           ),
                           trailing: selected
                               ? const Icon(Icons.check_circle)
                               : const Icon(Icons.chevron_right),
-                          onTap: () => Navigator.pop(context, destination),
+                          onTap: () => _select(destination),
                         );
                       },
                     ),
@@ -125,8 +155,8 @@ class _DestinationSearchScreenState extends State<DestinationSearchScreen> {
               padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
               color: const Color(0xFFFFF4CF),
               child: const Text(
-                'Room names are official. The map endpoint is the official '
-                'building location; indoor walking is estimated separately.',
+                'Choose a building for a quick destination or a classroom for '
+                'an extra indoor walking allowance. Room names are official.',
                 style: TextStyle(fontSize: 12),
               ),
             ),
@@ -146,7 +176,7 @@ class _NoResults extends StatelessWidget {
       child: Padding(
         padding: EdgeInsets.all(32),
         child: Text(
-          'No general-assignment classroom matched. Try a building '
+          'No building or general-assignment classroom matched. Try a building '
           'abbreviation, room number, or full building name.',
           textAlign: TextAlign.center,
         ),

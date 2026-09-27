@@ -13,6 +13,23 @@ void main() {
           .toSet(),
       hasLength(139),
     );
+    expect(uciBuildingDestinations, hasLength(29));
+    expect(uciCampusDestinations, hasLength(168));
+  });
+
+  test('supports a whole building without inventing a classroom location', () {
+    final destination = destinationByStorageKey('building:DBH')!;
+
+    expect(destination.isClassroom, isFalse);
+    expect(destination.label, 'DBH');
+    expect(destination.inferredFloor, isNull);
+    expect(destination.indoorMinutes, 0);
+    expect(destination.officialClassroomUrl, isNull);
+  });
+
+  test('loads both current storage keys and legacy raw room codes', () {
+    expect(destinationByStorageKey('room:DBH 1100')?.roomCode, 'DBH 1100');
+    expect(destinationByStorageKey('DBH 1100')?.roomCode, 'DBH 1100');
   });
 
   test('resolves an exact room with its official building endpoint', () {

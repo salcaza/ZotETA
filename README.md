@@ -24,9 +24,13 @@ map/UI operation in context.
   no-permit profiles
 - Local-only profile storage with no login or backend
 - Time-aware S/P zone, resident, evening, and paid-visitor eligibility
-- Search across 139 exact UCI general-assignment classrooms in 29 buildings
+- Required destination step with all 29 buildings and 139 exact UCI
+  general-assignment classrooms
 - Official UCI building endpoints, inferred floor, and explicit indoor buffer
 - Destination-aware parking-to-classroom walking estimates
+- Automatic, dismissible Parked/Searching check-in for the selected facility
+- Persistent search timer and voluntary completed parking observations
+- Time-of-day parking baselines with immediate fresh-report ETA adjustment
 - Expected and conservative total-time estimates
 - Parking-search and failed-lot penalties
 - Hill-adjusted walking time
@@ -40,8 +44,10 @@ UCI Transportation's official [student permit rules](https://parking.uci.edu/per
 currently labels its values as 2025–2026. Posted signs and current UCI guidance
 always override the prototype.
 
-Parking times, live reports, and parking-facility point coordinates are
-explicitly seed/demo data. They must not be presented as live UCI availability.
+Parking baselines and parking-facility point coordinates remain seed/demo data.
+Parked/Searching observations are real user inputs, but this version stores
+them only on the current device. “Live adjusted” therefore means adjusted from
+fresh reports on this installation, not campus-wide UCI availability.
 
 Classroom identifiers come from UCI's official
 [Classroom Technologies catalog](https://classrooms.uci.edu/classrooms/).
@@ -94,8 +100,9 @@ flutter test
 1. Add editable arrival and planned-departure times.
 2. Represent parking facilities as area/stall-category polygons, including
    preferred, reserved, motorcycle, pay-by-space, and 24-hour restrictions.
-3. Add voluntary `started searching`, `parked`, `gave up`, and `leaving`
-   observations.
-4. Replace demo search estimates with time-bucketed observations and confidence.
+3. Connect `ParkingObservationRepository` to a shared backend and add privacy,
+   abuse prevention, events, holidays, and model monitoring.
+4. Replace seed baselines with trained time-bucket estimates and richer
+   uncertainty.
 5. Replace straight-line campus walking estimates with ArcGIS pedestrian
    routing and Elevation service calls.

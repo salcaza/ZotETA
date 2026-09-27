@@ -39,4 +39,16 @@ void main() {
     expect(estimate.adjustedWalkMinutes, 12);
     expect(estimate.expectedMinutes, 45);
   });
+
+  test('accepts live typical and cautious parking-search overrides', () {
+    final arc = sampleParkingOptions.firstWhere((option) => option.id == 'arc');
+    final estimate = estimator.estimate(
+      arc,
+      parkingSearchMinutesOverride: 9,
+      cautiousSearchMinutesOverride: 13,
+    );
+
+    expect(estimate.expectedParkingMinutes, 9);
+    expect(estimate.conservativeMinutes, 20 + 13 + 4 + 15);
+  });
 }

@@ -27,22 +27,29 @@ class CampusBuilding {
 /// for each room. Therefore the map endpoint is the official building marker;
 /// [indoorMinutes] explicitly represents the remaining indoor portion.
 class CampusDestination {
-  const CampusDestination({required this.building, required this.roomCode});
+  const CampusDestination({required this.building, this.roomCode});
 
   final CampusBuilding building;
-  final String roomCode;
+
+  /// Exact classroom code, or `null` when the whole building was selected.
+  final String? roomCode;
 
   double get latitude => building.latitude;
   double get longitude => building.longitude;
-  String get label => roomCode;
-  String get subtitle => building.name;
+  bool get isClassroom => roomCode != null;
+  String get storageKey =>
+      isClassroom ? 'room:$roomCode' : 'building:${building.abbreviation}';
+  String get label => roomCode ?? building.abbreviation;
+  String get subtitle => isClassroom ? building.name : 'Building destination';
 
   /// Best-effort floor parsed from UCI room-number conventions.
   ///
   /// Four-digit rooms use their first digit; three-digit rooms use the
   /// hundreds digit. The UI labels this as inferred rather than surveyed.
-  int get inferredFloor {
-    final roomPart = roomCode.split(' ').last;
+  int? get inferredFloor {
+    final code = roomCode;
+    if (code == null) return null;
+    final roomPart = code.split(' ').last;
     final digits = RegExp(r'^\d+').stringMatch(roomPart);
     if (digits == null || digits.isEmpty) return 1;
     final number = int.tryParse(digits) ?? 100;
@@ -50,11 +57,17 @@ class CampusDestination {
   }
 
   /// Transparent allowance after reaching the building marker.
-  int get indoorMinutes => 2 + (inferredFloor - 1).clamp(0, 8);
+  int get indoorMinutes {
+    final floor = inferredFloor;
+    if (floor == null) return 0;
+    return 2 + (floor - 1).clamp(0, 8);
+  }
 
-  String get officialClassroomUrl {
+  String? get officialClassroomUrl {
+    final code = roomCode;
+    if (code == null) return null;
     final slug = building.abbreviation.toLowerCase();
-    final roomSlug = roomCode.toLowerCase().replaceAll(' ', '-');
+    final roomSlug = code.toLowerCase().replaceAll(' ', '-');
     return 'https://classrooms.uci.edu/classrooms/$slug/$roomSlug';
   }
 }

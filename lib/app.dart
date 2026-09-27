@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import 'data/uci_classroom_catalog.dart';
 import 'models/campus_destination.dart';
 import 'models/permit_profile.dart';
+import 'screens/destination_search_screen.dart';
 import 'screens/permit_onboarding_screen.dart';
 import 'screens/parking_map_screen.dart';
 import 'services/destination_store.dart';
@@ -59,7 +59,7 @@ class _AppHomeState extends State<_AppHome> {
   final _profileStore = PermitProfileStore();
   final _destinationStore = DestinationStore();
   PermitProfile? _profile;
-  CampusDestination _destination = defaultCampusDestination;
+  CampusDestination? _destination;
   bool _loaded = false;
   bool _editing = false;
 
@@ -109,11 +109,20 @@ class _AppHomeState extends State<_AppHome> {
       );
     }
 
+    final destination = _destination;
+    if (destination == null) {
+      return DestinationSearchScreen(
+        currentDestination: null,
+        selectionRequired: true,
+        onSelected: _saveDestination,
+      );
+    }
+
     return ParkingMapScreen(
-      key: ValueKey('${profile.cacheKey}:${_destination.roomCode}'),
+      key: ValueKey('${profile.cacheKey}:${destination.storageKey}'),
       hasArcGISKey: widget.hasArcGISKey,
       permit: profile,
-      destination: _destination,
+      destination: destination,
       onDestinationChanged: _saveDestination,
       onEditProfile: () => setState(() => _editing = true),
     );

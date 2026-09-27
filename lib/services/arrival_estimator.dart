@@ -41,7 +41,12 @@ class ArrivalEstimator {
   ///
   /// Conservative total:
   /// `drive + P80 search + fallback allowance + adjusted walk`
-  ArrivalEstimate estimate(ParkingOption option, {int? walkMinutesOverride}) {
+  ArrivalEstimate estimate(
+    ParkingOption option, {
+    int? walkMinutesOverride,
+    int? parkingSearchMinutesOverride,
+    int? cautiousSearchMinutesOverride,
+  }) {
     // Transparent prototype heuristic: every 12 m of ascent adds roughly a
     // minute to the base walk. The production version will use route samples.
     final adjustedWalk =
@@ -53,7 +58,11 @@ class ArrivalEstimator {
     // after rounding: round(0.25 * 14) = 4.
     final failureRiskMinutes =
         (option.fullProbability * option.fallbackPenaltyMinutes).round();
-    final expectedParking = option.searchMedianMinutes + failureRiskMinutes;
+    final expectedSearch =
+        parkingSearchMinutesOverride ?? option.searchMedianMinutes;
+    final cautiousSearch =
+        cautiousSearchMinutesOverride ?? option.searchP80Minutes;
+    final expectedParking = expectedSearch + failureRiskMinutes;
 
     // High-risk options reserve the entire fallback penalty. Lower-risk
     // options reserve half, rounded upward, for a less extreme safety margin.
@@ -65,7 +74,7 @@ class ArrivalEstimator {
       expectedMinutes: option.driveMinutes + expectedParking + adjustedWalk,
       conservativeMinutes:
           option.driveMinutes +
-          option.searchP80Minutes +
+          cautiousSearch +
           conservativeFallback +
           adjustedWalk,
       adjustedWalkMinutes: adjustedWalk,

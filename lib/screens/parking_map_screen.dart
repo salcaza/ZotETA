@@ -1,13 +1,18 @@
+import 'dart:async';
+
 import 'package:arcgis_maps/arcgis_maps.dart';
 import 'package:flutter/material.dart';
 
 import '../data/sample_parking_data.dart';
 import '../models/campus_destination.dart';
 import '../models/parking_option.dart';
+import '../models/parking_observation.dart';
 import '../models/permit_profile.dart';
 import '../services/arrival_estimator.dart';
 import '../services/destination_walk_estimator.dart';
+import '../services/live_parking_estimator.dart';
 import '../services/parking_eligibility_service.dart';
+import '../services/parking_observation_store.dart';
 import 'destination_search_screen.dart';
 
 /// The main ZotETA experience: an ArcGIS map plus ranked parking choices.
@@ -32,10 +37,10 @@ class ParkingMapScreen extends StatefulWidget {
   /// Current permit selection used for every eligibility decision.
   final PermitProfile permit;
 
-  /// Exact official classroom selected by the user.
+  /// Official building or exact classroom selected by the user.
   final CampusDestination destination;
 
-  /// Saves a newly selected classroom in the app coordinator.
+  /// Saves a newly selected destination in the app coordinator.
   final Future<void> Function(CampusDestination destination)
   onDestinationChanged;
 
@@ -68,6 +73,9 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
   final _eligibility = const ParkingEligibilityService();
   final _estimator = const ArrivalEstimator();
   final _walkEstimator = const DestinationWalkEstimator();
+  final _liveEstimator = const LiveParkingEstimator();
+  final ParkingObservationRepository _observationRepository =
+      LocalParkingObservationRepository();
 
   // ArcGIS returns a Graphic after a marker tap. This lookup connects that
   // SDK object back to the ParkingOption ID understood by our app.
@@ -75,8 +83,47 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
 
   // Mutable screen state. Calling setState after changing either value asks
   // Flutter to rebuild the affected widgets.
-  String _selectedId = 'arc';
+  late String _selectedId;
   bool _mapReady = false;
+  bool _reportsLoaded = false;
+  String? _dismissedPromptForId;
+  List<ParkingObservation> _observations = const [];
+  ActiveParkingSearch? _activeSearch;
+  Timer? _clock;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedId = sampleParkingOptions
+        .firstWhere(_isLegal, orElse: () => sampleParkingOptions.first)
+        .id;
+    _loadParkingReports();
+    _clock = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted && _activeSearch != null) setState(() {});
+    });
+  }
+
+  ParkingOption get _selectedOption => sampleParkingOptions.firstWhere(
+    (option) => option.id == _selectedId,
+    orElse: () => sampleParkingOptions.first,
+  );
+
+  Future<void> _loadParkingReports() async {
+    final values = await Future.wait([
+      _observationRepository.loadRecent(),
+      _observationRepository.loadActiveSearch(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _observations = values[0] as List<ParkingObservation>;
+      _activeSearch = values[1] as ActiveParkingSearch?;
+      if (_activeSearch != null) _selectedId = _activeSearch!.facilityId;
+      _reportsLoaded = true;
+    });
+  }
+
+  LiveParkingPrediction _prediction(ParkingOption option) => _liveEstimator
+      .estimate(option: option, observations: _observations, at: _arrivalTime);
 
   /// Produces a new list ordered by legality and then expected arrival time.
   ///
@@ -88,14 +135,8 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
       final aLegal = _isLegal(a);
       final bLegal = _isLegal(b);
       if (aLegal != bLegal) return aLegal ? -1 : 1;
-      return _estimator
-          .estimate(a, walkMinutesOverride: _walkMinutes(a))
-          .expectedMinutes
-          .compareTo(
-            _estimator
-                .estimate(b, walkMinutesOverride: _walkMinutes(b))
-                .expectedMinutes,
-          );
+      return _estimate(a).expectedMinutes
+          .compareTo(_estimate(b).expectedMinutes);
     });
     return options;
   }
@@ -111,8 +152,15 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
   int _walkMinutes(ParkingOption option) =>
       _walkEstimator.estimateMinutes(option, widget.destination);
 
-  ArrivalEstimate _estimate(ParkingOption option) =>
-      _estimator.estimate(option, walkMinutesOverride: _walkMinutes(option));
+  ArrivalEstimate _estimate(ParkingOption option) {
+    final prediction = _prediction(option);
+    return _estimator.estimate(
+      option,
+      walkMinutesOverride: _walkMinutes(option),
+      parkingSearchMinutesOverride: prediction.typicalMinutes,
+      cautiousSearchMinutesOverride: prediction.cautiousMinutes,
+    );
+  }
 
   String get _formattedArrivalTime {
     final hour = _arrivalTime.hour % 12 == 0 ? 12 : _arrivalTime.hour % 12;
@@ -126,6 +174,7 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
     // Native-backed controllers own resources outside Dart's garbage collector.
     // Releasing the controller prevents leaks when this screen is removed.
     _mapController.dispose();
+    _clock?.cancel();
     super.dispose();
   }
 
@@ -219,13 +268,19 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
     if (result.graphics.isEmpty) return;
     final parkingId = _parkingIdByGraphic[result.graphics.first];
     if (parkingId != null && mounted) {
-      setState(() => _selectedId = parkingId);
+      setState(() {
+        _selectedId = parkingId;
+        _dismissedPromptForId = null;
+      });
     }
   }
 
   /// Selects a recommendation card and moves the map camera to its facility.
   Future<void> _selectOption(ParkingOption option) async {
-    setState(() => _selectedId = option.id);
+    setState(() {
+      _selectedId = option.id;
+      _dismissedPromptForId = null;
+    });
     if (!_mapReady) return;
 
     // A smaller map scale means a closer view of the selected facility.
@@ -247,9 +302,50 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
             DestinationSearchScreen(currentDestination: widget.destination),
       ),
     );
-    if (selected != null && selected.roomCode != widget.destination.roomCode) {
+    if (selected != null &&
+        selected.storageKey != widget.destination.storageKey) {
       await widget.onDestinationChanged(selected);
     }
+  }
+
+  Future<void> _markSearching() async {
+    final option = _selectedOption;
+    final active = await _observationRepository.startSearching(
+      option.id,
+      DateTime.now(),
+    );
+    if (!mounted) return;
+    setState(() {
+      _activeSearch = active;
+      _dismissedPromptForId = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Search timer started for ${option.shortName}.')),
+    );
+  }
+
+  Future<void> _markParked() async {
+    final option = _selectedOption;
+    final observation = await _observationRepository.markParked(
+      option.id,
+      DateTime.now(),
+    );
+    if (!mounted) return;
+    setState(() {
+      _observations = [observation, ..._observations];
+      _activeSearch = null;
+      _dismissedPromptForId = option.id;
+    });
+    final duration = observation.searchDurationMinutes;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          duration == null
+              ? 'Parked report added. The estimate updated.'
+              : 'Recorded a $duration-minute search. The estimate updated.',
+        ),
+      ),
+    );
   }
 
   @override
@@ -284,6 +380,22 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
                   if (!widget.hasArcGISKey) ...[
                     const SizedBox(height: 8),
                     const _ApiKeyNotice(),
+                  ],
+                  if (_reportsLoaded &&
+                      _isLegal(_selectedOption) &&
+                      _dismissedPromptForId != _selectedId) ...[
+                    const SizedBox(height: 8),
+                    _ParkingCheckInBanner(
+                      option: _selectedOption,
+                      activeSearch: _activeSearch?.facilityId == _selectedId
+                          ? _activeSearch
+                          : null,
+                      now: DateTime.now(),
+                      onParked: _markParked,
+                      onSearching: _markSearching,
+                      onDismiss: () =>
+                          setState(() => _dismissedPromptForId = _selectedId),
+                    ),
                   ],
                 ],
               ),
@@ -340,6 +452,7 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
                       _ParkingOptionCard(
                         option: option,
                         estimate: _estimate(option),
+                        prediction: _prediction(option),
                         legal: _isLegal(option),
                         noPermit: widget.permit.type == PermitType.none,
                         arrivalTimeLabel: _formattedArrivalTime,
@@ -420,8 +533,10 @@ class _TripHeader extends StatelessWidget {
                           const SizedBox(width: 4),
                           Expanded(
                             child: Text(
-                              '${destination.roomCode} · '
-                              '${destination.building.name}',
+                              destination.isClassroom
+                                  ? '${destination.roomCode} · '
+                                        '${destination.building.name}'
+                                  : destination.building.name,
                               overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(fontWeight: FontWeight.w800),
@@ -474,11 +589,71 @@ class _ApiKeyNotice extends StatelessWidget {
   }
 }
 
+/// Small, dismissible Apple-Maps-style check-in that does not block the map.
+class _ParkingCheckInBanner extends StatelessWidget {
+  const _ParkingCheckInBanner({
+    required this.option,
+    required this.activeSearch,
+    required this.now,
+    required this.onParked,
+    required this.onSearching,
+    required this.onDismiss,
+  });
+
+  final ParkingOption option;
+  final ActiveParkingSearch? activeSearch;
+  final DateTime now;
+  final VoidCallback onParked;
+  final VoidCallback onSearching;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = activeSearch;
+    final message = active == null
+        ? 'At ${option.shortName}?'
+        : 'Searching ${active.elapsedMinutesAt(now)} min at '
+              '${option.shortName}';
+    return Material(
+      elevation: 4,
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+        child: Row(
+          children: [
+            const Icon(Icons.radar, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+            TextButton(onPressed: onParked, child: const Text('Parked')),
+            TextButton(
+              onPressed: onSearching,
+              child: Text(active == null ? 'Searching' : 'Still searching'),
+            ),
+            IconButton(
+              tooltip: 'Dismiss check-in',
+              visualDensity: VisualDensity.compact,
+              onPressed: onDismiss,
+              icon: const Icon(Icons.close, size: 18),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// A tappable summary of one parking option and its calculated travel times.
 class _ParkingOptionCard extends StatelessWidget {
   const _ParkingOptionCard({
     required this.option,
     required this.estimate,
+    required this.prediction,
     required this.legal,
     required this.noPermit,
     required this.arrivalTimeLabel,
@@ -488,6 +663,7 @@ class _ParkingOptionCard extends StatelessWidget {
 
   final ParkingOption option;
   final ArrivalEstimate estimate;
+  final LiveParkingPrediction prediction;
   final bool legal;
   final bool noPermit;
   final String arrivalTimeLabel;
@@ -553,7 +729,7 @@ class _ParkingOptionCard extends StatelessWidget {
                     _Metric(
                       icon: Icons.local_parking,
                       value: '${estimate.expectedParkingMinutes} min',
-                      label: 'parking',
+                      label: 'parking + risk',
                     ),
                     _Metric(
                       icon: Icons.directions_walk,
@@ -592,12 +768,14 @@ class _ParkingOptionCard extends StatelessWidget {
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          option.liveReportSummary,
+                          '${prediction.typicalMinutes} min search · '
+                          '${prediction.summary}',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
                       Text(
-                        'Plan for ${estimate.conservativeMinutes} min',
+                        '${prediction.confidenceLabel} · plan for '
+                        '${estimate.conservativeMinutes} min',
                         style: Theme.of(context).textTheme.labelMedium
                             ?.copyWith(fontWeight: FontWeight.w700),
                       ),

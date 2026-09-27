@@ -50,21 +50,26 @@ lib/
   app.dart                          app-wide theme and first screen
   models/permit_profile.dart        permit types and local profile
   models/campus_destination.dart    building and exact-room destination
+  models/parking_observation.dart   parked reports and active search timer
   models/parking_option.dart        parking-facility vocabulary
   data/sample_parking_data.dart     prototype inputs
   data/uci_classroom_catalog.dart   139 official room identifiers
-  services/destination_store.dart   selected-room persistence
+  services/destination_store.dart   selected-destination persistence
   services/destination_walk_estimator.dart
                                     destination-aware walk estimate
   services/permit_profile_store.dart
                                     on-device profile persistence
   services/arrival_estimator.dart   travel-time calculations
+  services/live_parking_estimator.dart
+                                    time baseline + fresh report blend
+  services/parking_observation_store.dart
+                                    replaceable report storage boundary
   services/parking_eligibility_service.dart
                                     permit rules
   screens/permit_onboarding_screen.dart
                                     first-launch and edit form
   screens/destination_search_screen.dart
-                                    exact-room search
+                                    building and exact-room search
   screens/parking_map_screen.dart   ArcGIS map and recommendations
 
 test/
@@ -72,6 +77,7 @@ test/
   parking_eligibility_service_test.dart
   permit_profile_test.dart
   campus_destination_test.dart
+  live_parking_estimator_test.dart
 ```
 
 The `android/` and `ios/` directories mostly contain platform scaffolding
@@ -89,9 +95,10 @@ main()
   -> assign the key to ArcGISEnvironment
   -> runApp(ZotEtaApp)
   -> MaterialApp builds _AppHome
-  -> _AppHome loads the local permit profile
-  -> load the saved classroom or default to DBH 1100
-  -> show onboarding if the permit is absent, otherwise show ParkingMapScreen
+  -> _AppHome loads the local permit profile and destination
+  -> show permit onboarding if the permit is absent
+  -> require a building or classroom if the destination is absent
+  -> show ParkingMapScreen when both choices exist
 ```
 
 `config.json` is not read directly by code at runtime. The command
@@ -146,7 +153,7 @@ different details: S/P need a zone, R needs a resident subtype, ACC needs a
 community, and E/MX/no-permit need no second selection. Its `isComplete`
 property validates those combinations before they can be saved.
 
-## 7. Local profile storage
+## 7. Local settings and observation storage
 
 `PermitProfileStore` turns the profile into JSON and saves that short string
 with Flutter's `shared_preferences` package. On Android this becomes ordinary
@@ -156,8 +163,15 @@ sync across phones.
 This is intentionally a setting—not an identity system. The app stores no
 UCInetID, password, license plate, home address, payment information, or trip
 history. `app.dart` waits for the asynchronous load before deciding whether to
-show onboarding or the map. Saving updates both device storage and Flutter
-state, which immediately switches screens.
+show onboarding, destination search, or the map. Saving updates both device
+storage and Flutter state, which immediately switches screens.
+
+`DestinationStore` does the same for a building or room. Parking reports use
+`ParkingObservationRepository`, an interface separating the rest of the app
+from storage. Its current local implementation saves an active search timer
+and up to 200 completed observations. A later shared service can implement the
+same interface without rewriting the map or estimator. Reports do not yet sync
+across users or devices.
 
 ## 8. Seed data boundary
 
@@ -165,8 +179,8 @@ state, which immediately switches screens.
 in-memory list: it does not query UCI, ArcGIS, or a database.
 
 The coordinates place prototype point markers. All travel-time, elevation,
-availability, and community-report values are demonstrations. Centralizing
-them makes it straightforward to replace their source later while preserving
+and availability-baseline values are demonstrations. Centralizing them makes
+it straightforward to replace their source later while preserving
 the objects consumed by the rest of the app.
 
 The classroom catalog has a different trust boundary. Its 139 room identifiers
@@ -176,6 +190,9 @@ are official public records checked in September 2026, not demo coordinates.
 However, UCI does not expose room-level GIS geometry publicly. A destination
 therefore keeps the exact room identity while using the official building
 marker as its outdoor endpoint.
+
+A building selection uses that endpoint directly with no invented room or
+floor. A classroom selection adds an explicitly labeled indoor allowance.
 
 ## 9. Eligibility service
 
@@ -223,6 +240,18 @@ walking-speed function.
 failure-risk minutes = round(probability full * fallback penalty)
 expected parking = median search + failure-risk minutes
 ```
+
+Before this formula is evaluated, `LiveParkingEstimator` adjusts the seed
+median for the current time bucket. Weekday 9:30 a.m.–2 p.m. is the prototype
+peak bucket; weekday shoulders, evenings, and weekends use lower factors.
+Fresh reports from the last hour are blended with a two-report baseline
+prior and decay as they age. A new report affects the ETA immediately without
+allowing one report to replace all historical knowledge.
+
+Tapping **Searching** creates a persistent timer. Tapping **Parked** later
+turns it into a measured search duration. Tapping **Parked** directly creates
+an availability signal but deliberately does not claim the search took zero
+minutes. The card displays adjusted search time, freshness, and confidence.
 
 This is an expected-value calculation. A failure that costs 14 minutes and
 occurs 25 percent of the time contributes about 4 minutes to the long-run
@@ -320,8 +349,9 @@ Real today:
 - ArcGIS basemap, viewpoints, overlay markers, and marker identification
 - Permit-rule and arrival-estimation services
 - Editable, locally persisted parking profile
-- Exact-room search with a locally persisted classroom selection
+- Required building/classroom search with a locally persisted selection
 - Official building destination marker and room-aware walking estimate
+- Device-local Parked/Searching reports, timer, and live ETA updates
 - Recommendation sorting and interaction
 - Compile-time API-key configuration
 - Unit tests
@@ -334,12 +364,13 @@ Still mocked:
 - ArcGIS elevation queries
 - Room-level indoor geometry and turn-by-turn indoor routing
 - Authoritative UCI parking polygons and rule records
-- Live availability observations and a backend
+- Shared/campus-wide observation backend
 - Confidence, abuse prevention, and privacy controls
 
 This boundary should be stated clearly in demos. The current version validates
-the product concept, software structure, and geographic user experience; it
-does not claim to know live parking availability.
+the product concept, software structure, and geographic user experience. Its
+“live” values are only as current as reports saved on that device; it does not
+claim campus-wide live parking availability.
 
 ## 15. How future data should flow
 

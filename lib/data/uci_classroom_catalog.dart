@@ -356,6 +356,18 @@ final List<CampusDestination> uciClassroomDestinations = [
       CampusDestination(building: building, roomCode: roomCode),
 ];
 
+/// One selectable whole-building destination for every catalog building.
+final List<CampusDestination> uciBuildingDestinations = [
+  for (final building in uciClassroomBuildings)
+    CampusDestination(building: building),
+];
+
+/// Buildings first, followed by their precise general-assignment rooms.
+final List<CampusDestination> uciCampusDestinations = [
+  ...uciBuildingDestinations,
+  ...uciClassroomDestinations,
+];
+
 CampusDestination get defaultCampusDestination =>
     destinationByRoomCode('DBH 1100')!;
 
@@ -363,6 +375,19 @@ CampusDestination? destinationByRoomCode(String? roomCode) {
   if (roomCode == null) return null;
   for (final destination in uciClassroomDestinations) {
     if (destination.roomCode == roomCode) return destination;
+  }
+  return null;
+}
+
+CampusDestination? destinationByStorageKey(String? storageKey) {
+  if (storageKey == null) return null;
+
+  // Values written by the first prototype were raw room codes. Supporting
+  // those values keeps existing installs working after this schema change.
+  if (!storageKey.contains(':')) return destinationByRoomCode(storageKey);
+
+  for (final destination in uciCampusDestinations) {
+    if (destination.storageKey == storageKey) return destination;
   }
   return null;
 }
