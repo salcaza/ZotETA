@@ -5,7 +5,7 @@ import 'package:zot_eta/services/destination_walk_estimator.dart';
 
 void main() {
   test('catalog contains the researched building and exact-room coverage', () {
-    expect(uciClassroomBuildings, hasLength(29));
+    expect(uciClassroomBuildings, hasLength(31));
     expect(uciClassroomDestinations, hasLength(139));
     expect(
       uciClassroomDestinations
@@ -13,8 +13,15 @@ void main() {
           .toSet(),
       hasLength(139),
     );
-    expect(uciBuildingDestinations, hasLength(29));
-    expect(uciCampusDestinations, hasLength(168));
+    expect(uciBuildingDestinations, hasLength(31));
+    expect(uciCampusDestinations, hasLength(170));
+  });
+
+  test('includes business-school acronyms and common student names', () {
+    final sb1 = destinationByStorageKey('building:SB1')!;
+
+    expect(sb1.building.name, 'Paul Merage School of Business I');
+    expect(sb1.building.aliases, contains('Business School'));
   });
 
   test('supports a whole building without inventing a classroom location', () {

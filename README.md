@@ -1,6 +1,6 @@
 # ZotETA
 
-ZotETA is a mobile-first UCI parking planner that ranks legal parking options
+ZotETA is a cross-platform UCI parking planner that ranks legal parking options
 by total expected arrival time:
 
 ```text
@@ -12,7 +12,7 @@ The prototype uses Flutter and Esri's official ArcGIS Maps SDK for Flutter.
 ## Learn the codebase
 
 Start with [`docs/architecture.md`](docs/architecture.md) for a beginner-friendly
-walkthrough of Flutter, Dart, Android, ArcGIS, every hand-written app layer, the
+walkthrough of Flutter, Dart, ArcGIS, every hand-written app layer, the
 arrival formulas, testing, and the current prototype boundaries. The Dart source
 also contains documentation comments explaining each model, service, and major
 map/UI operation in context.
@@ -24,8 +24,12 @@ map/UI operation in context.
   no-permit profiles
 - Local-only profile storage with no login or backend
 - Time-aware S/P zone, resident, evening, and paid-visitor eligibility
-- Required destination step with all 29 buildings and 139 exact UCI
+- Required destination step with 31 buildings and 139 exact UCI
   general-assignment classrooms
+- Acronym, official-name, and common-name search, including SB1/SB2 and Merage
+- Live ArcGIS driving and walking routes for the selected parking option
+- Blue driving and dashed-gold walking lines from the 10 Ravenna test origin
+- Live route durations incorporated into the selected option's total ETA
 - Official UCI building endpoints, inferred floor, and explicit indoor buffer
 - Destination-aware parking-to-classroom walking estimates
 - Automatic, dismissible Parked/Searching check-in for the selected facility
@@ -48,6 +52,10 @@ Parking baselines and parking-facility point coordinates remain seed/demo data.
 Parked/Searching observations are real user inputs, but this version stores
 them only on the current device. “Live adjusted” therefore means adjusted from
 fresh reports on this installation, not campus-wide UCI availability.
+
+The selected driving and walking paths are solved online by ArcGIS and refresh
+every five minutes. The origin is intentionally fixed at 10 Ravenna for this
+prototype; ZotETA does not request or claim to use the device location yet.
 
 Classroom identifiers come from UCI's official
 [Classroom Technologies catalog](https://classrooms.uci.edu/classrooms/).
@@ -104,5 +112,4 @@ flutter test
    abuse prevention, events, holidays, and model monitoring.
 4. Replace seed baselines with trained time-bucket estimates and richer
    uncertainty.
-5. Replace straight-line campus walking estimates with ArcGIS pedestrian
-   routing and Elevation service calls.
+5. Add ArcGIS Elevation service samples to the live pedestrian route.

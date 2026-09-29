@@ -49,7 +49,7 @@ class _DestinationSearchScreenState extends State<DestinationSearchScreen> {
     return uciCampusDestinations.where((destination) {
       final searchable = _normalize(
         '${destination.roomCode ?? ''} ${destination.building.abbreviation} '
-        '${destination.building.name}',
+        '${destination.building.name} ${destination.building.aliases.join(' ')}',
       );
       return searchable.contains(query);
     }).toList()..sort((a, b) {
@@ -111,7 +111,10 @@ class _DestinationSearchScreenState extends State<DestinationSearchScreen> {
                       style: Theme.of(context).textTheme.labelLarge,
                     ),
                   ),
-                  const Text('29 buildings · 139 rooms'),
+                  Text(
+                    '${uciClassroomBuildings.length} buildings · '
+                    '${uciClassroomDestinations.length} rooms',
+                  ),
                 ],
               ),
             ),

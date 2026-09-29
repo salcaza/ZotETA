@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 
 import '../data/sample_parking_data.dart';
 import '../models/campus_destination.dart';
+import '../models/live_trip_route.dart';
 import '../models/parking_option.dart';
 import '../models/parking_observation.dart';
 import '../models/permit_profile.dart';
 import '../services/arrival_estimator.dart';
+import '../services/arcgis_trip_route_service.dart';
 import '../services/destination_walk_estimator.dart';
 import '../services/live_parking_estimator.dart';
 import '../services/parking_eligibility_service.dart';
@@ -67,13 +69,15 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
 
   // A graphics overlay holds temporary client-side markers. A production app
   // may use an ArcGIS FeatureLayer when facilities come from a hosted dataset.
-  final _graphicsOverlay = GraphicsOverlay();
+  final _markerOverlay = GraphicsOverlay();
+  final _routeOverlay = GraphicsOverlay();
 
   // Business rules live in services rather than directly inside UI widgets.
   final _eligibility = const ParkingEligibilityService();
   final _estimator = const ArrivalEstimator();
   final _walkEstimator = const DestinationWalkEstimator();
   final _liveEstimator = const LiveParkingEstimator();
+  final _routeService = ArcGISTripRouteService();
   final ParkingObservationRepository _observationRepository =
       LocalParkingObservationRepository();
 
@@ -90,6 +94,11 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
   List<ParkingObservation> _observations = const [];
   ActiveParkingSearch? _activeSearch;
   Timer? _clock;
+  Timer? _routeRefreshClock;
+  LiveTripRoute? _liveRoute;
+  bool _routeLoading = false;
+  String? _routeError;
+  int _routeRequestSequence = 0;
 
   @override
   void initState() {
@@ -100,6 +109,11 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
     _loadParkingReports();
     _clock = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted && _activeSearch != null) setState(() {});
+    });
+    // Refreshing the selected route periodically updates traffic-dependent
+    // driving time without repeatedly solving routes for every parking card.
+    _routeRefreshClock = Timer.periodic(const Duration(minutes: 5), (_) {
+      if (_mapReady && widget.hasArcGISKey) _loadSelectedRoute(fitMap: false);
     });
   }
 
@@ -150,12 +164,20 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
   );
 
   int _walkMinutes(ParkingOption option) =>
-      _walkEstimator.estimateMinutes(option, widget.destination);
+      option.id == _selectedId && _liveRoute != null
+      ? _liveRoute!.walk.roundedMinutes + widget.destination.indoorMinutes
+      : _walkEstimator.estimateMinutes(option, widget.destination);
+
+  int _driveMinutes(ParkingOption option) =>
+      option.id == _selectedId && _liveRoute != null
+      ? _liveRoute!.drive.roundedMinutes
+      : option.driveMinutes;
 
   ArrivalEstimate _estimate(ParkingOption option) {
     final prediction = _prediction(option);
     return _estimator.estimate(
       option,
+      driveMinutesOverride: _driveMinutes(option),
       walkMinutesOverride: _walkMinutes(option),
       parkingSearchMinutesOverride: prediction.typicalMinutes,
       cautiousSearchMinutesOverride: prediction.cautiousMinutes,
@@ -175,6 +197,7 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
     // Releasing the controller prevents leaks when this screen is removed.
     _mapController.dispose();
     _clock?.cancel();
+    _routeRefreshClock?.cancel();
     super.dispose();
   }
 
@@ -184,7 +207,9 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
     // separately so their styles and interactions remain under app control.
     final map = ArcGISMap.withBasemapStyle(BasemapStyle.arcGISLightGray);
     _mapController.arcGISMap = map;
-    _mapController.graphicsOverlays.add(_graphicsOverlay);
+    // Routes sit below markers so the origin, parking, and destination remain
+    // easy to tap and recognize.
+    _mapController.graphicsOverlays.addAll([_routeOverlay, _markerOverlay]);
 
     for (final option in sampleParkingOptions) {
       final legal = _isLegal(option);
@@ -211,7 +236,7 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
         ),
         symbol: symbol,
       );
-      _graphicsOverlay.graphics.add(graphic);
+      _markerOverlay.graphics.add(graphic);
       _parkingIdByGraphic[graphic] = option.id;
     }
 
@@ -225,7 +250,7 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
             color: const Color(0xFF255799),
             width: 3,
           );
-    _graphicsOverlay.graphics.add(
+    _markerOverlay.graphics.add(
       Graphic(
         geometry: ArcGISPoint(
           x: widget.destination.longitude,
@@ -234,6 +259,19 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
         ),
         symbol: destinationSymbol,
       ),
+    );
+
+    // This fixed purple marker makes the temporary test origin explicit. It
+    // will be replaced by the device location in the next location phase.
+    final originSymbol =
+        SimpleMarkerSymbol(color: const Color(0xFF7C3AED), size: 16)
+          ..outline = SimpleLineSymbol(
+            style: SimpleLineSymbolStyle.solid,
+            color: Colors.white,
+            width: 2,
+          );
+    _markerOverlay.graphics.add(
+      Graphic(geometry: prototypeOrigin, symbol: originSymbol),
     );
 
     // A viewpoint is the map camera. Scale 18,000 shows the UCI campus area.
@@ -250,7 +288,99 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
 
     // An async operation might finish after a widget has been removed. mounted
     // prevents setState from being called on a state object no longer on screen.
-    if (mounted) setState(() => _mapReady = true);
+    if (mounted) {
+      setState(() => _mapReady = true);
+      await _loadSelectedRoute();
+    }
+  }
+
+  /// Requests fresh online driving and walking routes for the selected lot.
+  ///
+  /// The sequence number prevents a slower, older response from replacing the
+  /// route after the user quickly chooses a different parking facility.
+  Future<void> _loadSelectedRoute({bool fitMap = true}) async {
+    if (!_mapReady || !widget.hasArcGISKey) return;
+    final request = ++_routeRequestSequence;
+    final selectedId = _selectedId;
+    setState(() {
+      _routeLoading = true;
+      _routeError = null;
+    });
+
+    try {
+      final route = await _routeService.solveTrip(
+        parking: _selectedOption,
+        destination: widget.destination,
+      );
+      if (!mounted || request != _routeRequestSequence) return;
+
+      _drawRoute(route);
+      setState(() {
+        _liveRoute = route;
+        _routeLoading = false;
+      });
+
+      if (fitMap) {
+        final extent = GeometryEngine.combineExtents(
+          geometry1: route.drive.geometry,
+          geometry2: route.walk.geometry,
+        );
+        await _mapController.setViewpointGeometry(extent, paddingInDiPs: 72);
+      }
+    } catch (_) {
+      if (!mounted || request != _routeRequestSequence) return;
+      setState(() {
+        _routeLoading = false;
+        _routeError =
+            'Live route unavailable. Showing prototype time estimates.';
+      });
+    }
+
+    // If the selected ID changed without issuing a newer request, do not leave
+    // route data associated with the previous card.
+    if (mounted &&
+        selectedId != _selectedId &&
+        request == _routeRequestSequence) {
+      setState(() => _liveRoute = null);
+    }
+  }
+
+  void _drawRoute(LiveTripRoute route) {
+    _routeOverlay.graphics.clear();
+
+    // White casings keep both lines readable over streets and campus labels.
+    for (final leg in [route.drive, route.walk]) {
+      _routeOverlay.graphics.add(
+        Graphic(
+          geometry: leg.geometry,
+          symbol: SimpleLineSymbol(
+            style: leg.mode == TripLegMode.walking
+                ? SimpleLineSymbolStyle.shortDash
+                : SimpleLineSymbolStyle.solid,
+            color: Colors.white,
+            width: 8,
+          ),
+        ),
+      );
+    }
+    _routeOverlay.graphics.addAll([
+      Graphic(
+        geometry: route.drive.geometry,
+        symbol: SimpleLineSymbol(
+          style: SimpleLineSymbolStyle.solid,
+          color: const Color(0xFF1677FF),
+          width: 5,
+        ),
+      ),
+      Graphic(
+        geometry: route.walk.geometry,
+        symbol: SimpleLineSymbol(
+          style: SimpleLineSymbolStyle.shortDash,
+          color: const Color(0xFFFFB000),
+          width: 5,
+        ),
+      ),
+    ]);
   }
 
   /// Selects the parking facility whose ArcGIS marker the user tapped.
@@ -260,7 +390,7 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
     // identifyGraphicsOverlay translates a screen pixel into nearby graphics.
     // The 24-pixel tolerance makes small markers easier to tap on a phone.
     final result = await _mapController.identifyGraphicsOverlay(
-      _graphicsOverlay,
+      _markerOverlay,
       screenPoint: position,
       tolerance: 24,
       maximumResults: 1,
@@ -268,10 +398,10 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
     if (result.graphics.isEmpty) return;
     final parkingId = _parkingIdByGraphic[result.graphics.first];
     if (parkingId != null && mounted) {
-      setState(() {
-        _selectedId = parkingId;
-        _dismissedPromptForId = null;
-      });
+      final option = sampleParkingOptions.firstWhere(
+        (candidate) => candidate.id == parkingId,
+      );
+      await _selectOption(option);
     }
   }
 
@@ -280,18 +410,11 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
     setState(() {
       _selectedId = option.id;
       _dismissedPromptForId = null;
+      _liveRoute = null;
+      _routeError = null;
     });
     if (!_mapReady) return;
-
-    // A smaller map scale means a closer view of the selected facility.
-    await _mapController.setViewpointCenter(
-      ArcGISPoint(
-        x: option.longitude,
-        y: option.latitude,
-        spatialReference: SpatialReference.wgs84,
-      ),
-      scale: 9000,
-    );
+    await _loadSelectedRoute();
   }
 
   Future<void> _chooseDestination() async {
@@ -381,6 +504,18 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
                     const SizedBox(height: 8),
                     const _ApiKeyNotice(),
                   ],
+                  if (widget.hasArcGISKey) ...[
+                    const SizedBox(height: 8),
+                    _LiveRouteSummary(
+                      route: _liveRoute,
+                      loading: _routeLoading,
+                      error: _routeError,
+                      destination: widget.destination,
+                      onRefresh: _routeLoading
+                          ? null
+                          : () => _loadSelectedRoute(fitMap: false),
+                    ),
+                  ],
                   if (_reportsLoaded &&
                       _isLegal(_selectedOption) &&
                       _dismissedPromptForId != _selectedId) ...[
@@ -455,6 +590,9 @@ class _ParkingMapScreenState extends State<ParkingMapScreen> {
                         prediction: _prediction(option),
                         legal: _isLegal(option),
                         noPermit: widget.permit.type == PermitType.none,
+                        driveMinutes: _driveMinutes(option),
+                        usesLiveRoute:
+                            option.id == _selectedId && _liveRoute != null,
                         arrivalTimeLabel: _formattedArrivalTime,
                         selected: option.id == _selectedId,
                         onTap: () => _selectOption(option),
@@ -589,6 +727,79 @@ class _ApiKeyNotice extends StatelessWidget {
   }
 }
 
+/// Non-blocking status card for the selected online route.
+class _LiveRouteSummary extends StatelessWidget {
+  const _LiveRouteSummary({
+    required this.route,
+    required this.loading,
+    required this.error,
+    required this.destination,
+    required this.onRefresh,
+  });
+
+  final LiveTripRoute? route;
+  final bool loading;
+  final String? error;
+  final CampusDestination destination;
+  final VoidCallback? onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final currentRoute = route;
+    final subtitle = loading
+        ? 'Updating driving and walking routes…'
+        : error ??
+              (currentRoute == null
+                  ? 'Preparing route…'
+                  : '${currentRoute.drive.roundedMinutes} min drive · '
+                        '${currentRoute.walk.roundedMinutes + destination.indoorMinutes} '
+                        'min walk · ArcGIS online');
+
+    return Material(
+      elevation: 3,
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 9, 4, 9),
+        child: Row(
+          children: [
+            if (loading)
+              const SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              )
+            else
+              Icon(
+                error == null ? Icons.route : Icons.cloud_off_outlined,
+                size: 21,
+              ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '$prototypeOriginLabel → parking → destination',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+                  ),
+                  Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Refresh live route',
+              onPressed: onRefresh,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Small, dismissible Apple-Maps-style check-in that does not block the map.
 class _ParkingCheckInBanner extends StatelessWidget {
   const _ParkingCheckInBanner({
@@ -656,6 +867,8 @@ class _ParkingOptionCard extends StatelessWidget {
     required this.prediction,
     required this.legal,
     required this.noPermit,
+    required this.driveMinutes,
+    required this.usesLiveRoute,
     required this.arrivalTimeLabel,
     required this.selected,
     required this.onTap,
@@ -666,6 +879,8 @@ class _ParkingOptionCard extends StatelessWidget {
   final LiveParkingPrediction prediction;
   final bool legal;
   final bool noPermit;
+  final int driveMinutes;
+  final bool usesLiveRoute;
   final String arrivalTimeLabel;
   final bool selected;
   final VoidCallback onTap;
@@ -723,8 +938,8 @@ class _ParkingOptionCard extends StatelessWidget {
                   children: [
                     _Metric(
                       icon: Icons.directions_car,
-                      value: '${option.driveMinutes} min',
-                      label: 'drive',
+                      value: '$driveMinutes min',
+                      label: usesLiveRoute ? 'live drive' : 'drive estimate',
                     ),
                     _Metric(
                       icon: Icons.local_parking,

@@ -40,6 +40,18 @@ void main() {
     expect(estimate.expectedMinutes, 45);
   });
 
+  test('accepts live driving and walking route durations', () {
+    final aps = sampleParkingOptions.firstWhere((option) => option.id == 'aps');
+    final estimate = estimator.estimate(
+      aps,
+      driveMinutesOverride: 14,
+      walkMinutesOverride: 10,
+    );
+
+    expect(estimate.expectedMinutes, 39);
+    expect(estimate.conservativeMinutes, 55);
+  });
+
   test('accepts live typical and cautious parking-search overrides', () {
     final arc = sampleParkingOptions.firstWhere((option) => option.id == 'arc');
     final estimate = estimator.estimate(

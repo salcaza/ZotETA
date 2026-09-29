@@ -5,17 +5,25 @@ class CampusBuilding {
     required this.name,
     required this.latitude,
     required this.longitude,
-    required this.mapLocationId,
+    this.mapLocationId,
     required this.roomCodes,
+    this.aliases = const [],
   });
 
   final String abbreviation;
   final String name;
 
-  /// Official marker coordinates from UCI's public interactive campus map.
+  /// Common names that students may type instead of the official name.
+  final List<String> aliases;
+
+  /// Public building-level coordinates in WGS 84.
+  ///
+  /// These are navigation endpoints, not surveyed classroom coordinates.
   final double latitude;
   final double longitude;
-  final int mapLocationId;
+
+  /// UCI interactive-map identifier when the public catalog exposes one.
+  final int? mapLocationId;
 
   /// General-assignment classrooms published by UCI Classroom Technologies.
   final List<String> roomCodes;

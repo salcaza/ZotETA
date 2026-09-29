@@ -3,9 +3,9 @@ import '../models/campus_destination.dart';
 /// UCI general-assignment rooms published by Classroom Technologies.
 ///
 /// Room identifiers were checked against the official classroom catalog and
-/// building coordinates against UCI's public interactive map in September
-/// 2026. Coordinates represent official building markers, not invented indoor
-/// room coordinates.
+/// building coordinates against public UCI pages and map data in September
+/// 2026. Coordinates represent building endpoints, not invented indoor room
+/// coordinates. [CampusBuilding.aliases] captures common student terminology.
 const uciClassroomBuildings = <CampusBuilding>[
   CampusBuilding(
     abbreviation: 'ALP',
@@ -249,6 +249,34 @@ const uciClassroomBuildings = <CampusBuilding>[
       'RH 190',
       'RH 192',
     ],
+  ),
+  CampusBuilding(
+    abbreviation: 'SB1',
+    name: 'Paul Merage School of Business I',
+    aliases: [
+      'School of Business I',
+      'School of Business 1',
+      'Business School',
+      'Merage',
+      'Merage School',
+    ],
+    latitude: 33.6469938,
+    longitude: -117.8379340,
+    roomCodes: [],
+  ),
+  CampusBuilding(
+    abbreviation: 'SB2',
+    name: 'Paul Merage School of Business II',
+    aliases: [
+      'School of Business II',
+      'School of Business 2',
+      'Business School',
+      'Merage',
+      'Merage School',
+    ],
+    latitude: 33.6466631,
+    longitude: -117.8380857,
+    roomCodes: [],
   ),
   CampusBuilding(
     abbreviation: 'SE',

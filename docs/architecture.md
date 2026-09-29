@@ -184,9 +184,10 @@ it straightforward to replace their source later while preserving
 the objects consumed by the rest of the app.
 
 The classroom catalog has a different trust boundary. Its 139 room identifiers
-come from UCI Classroom Technologies, while each of its 29 building marker
-coordinates and public map IDs comes from UCI's interactive campus map. These
-are official public records checked in September 2026, not demo coordinates.
+come from UCI Classroom Technologies, while its 31 building endpoints were
+checked against public UCI pages and map data in September 2026. Most records
+also retain a UCI public map ID. These are public building locations, not demo
+coordinates.
 However, UCI does not expose room-level GIS geometry publicly. A destination
 therefore keeps the exact room identity while using the official building
 marker as its outdoor endpoint.
@@ -271,8 +272,8 @@ prototype policy intended to communicate uncertainty, not a trained forecast.
 
 ### Destination-aware walking
 
-`DestinationWalkEstimator` replaces the old fixed DBH walk when a parking
-recommendation is rendered. Until pedestrian routing is connected, it uses:
+`DestinationWalkEstimator` supplies a transparent fallback for parking options
+that have not been selected and whenever the online route cannot be solved:
 
 ```text
 outdoor minutes = ceil(
@@ -293,10 +294,13 @@ the view reports that it is ready, `_onMapReady`:
 
 1. Creates an Esri Light Gray basemap.
 2. Assigns it to the controller.
-3. Adds a client-side `GraphicsOverlay`.
+3. Adds separate client-side overlays for route lines and markers.
 4. Converts each option's longitude and latitude into an `ArcGISPoint`.
 5. Creates green or gray marker graphics based on eligibility.
-6. Centers the map over UCI.
+6. Adds the fixed 10 Ravenna test-origin and destination markers.
+7. Solves separate driving and walking legs with `RouteTask`.
+8. Draws a solid blue driving line and dashed gold walking line.
+9. Fits the camera around both route geometries.
 
 The points use WGS 84, the common longitude/latitude spatial reference. In an
 `ArcGISPoint`, `x` is longitude and `y` is latitude.
@@ -304,7 +308,14 @@ The points use WGS 84, the common longitude/latitude spatial reference. In an
 When a user taps the map, `identifyGraphicsOverlay` searches near the screen
 pixel for a marker. A lookup map connects the returned ArcGIS `Graphic` to the
 app's parking ID. Selecting a card performs the reverse interaction: it updates
-the ID and moves the ArcGIS viewpoint toward the corresponding coordinates.
+the ID, requests new online route legs, and fits the viewpoint to their extent.
+
+`ArcGISTripRouteService` owns the online route task and travel-mode selection.
+It returns geometry, duration, and distance for each leg. The selected card's
+ETA uses those live durations plus the explicit indoor-room allowance. Other
+cards retain seed drive times and destination-aware walking fallbacks until the
+user selects them. A sequence number prevents an older response from replacing
+a newer selection, and the selected route refreshes every five minutes.
 
 ## 12. Ranking and rendering
 
@@ -345,8 +356,10 @@ running the app. `flutter test` executes the behavioral assertions.
 
 Real today:
 
-- Android application and Flutter UI
+- Cross-platform Flutter codebase with an Android-tested build
 - ArcGIS basemap, viewpoints, overlay markers, and marker identification
+- ArcGIS online driving and walking routes for the selected parking option
+- Fixed, clearly labeled 10 Ravenna prototype origin
 - Permit-rule and arrival-estimation services
 - Editable, locally persisted parking profile
 - Required building/classroom search with a locally persisted selection
@@ -359,8 +372,7 @@ Real today:
 Still mocked:
 
 - Intended arrival/departure time (currently launch + 30 minutes / two hours)
-- Starting point input
-- ArcGIS driving and walking routes
+- Device-location input and permission flow
 - ArcGIS elevation queries
 - Room-level indoor geometry and turn-by-turn indoor routing
 - Authoritative UCI parking polygons and rule records
